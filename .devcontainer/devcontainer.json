@@ -12,7 +12,8 @@
 			// https://github.com/k2wanko/dev-container-google-cloud-sdk/tree/main
 			"version": "475.0.0"
 		},
-		"ghcr.io/devcontainers/features/python:1": {}
+		"ghcr.io/devcontainers/features/python:1": {},
+		"ghcr.io/devcontainers/features/terraform:1": {}
 	},
 	"customizations": {
 		"vscode": {
