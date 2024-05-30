@@ -1,0 +1,121 @@
+#cloud-config
+
+# The first line of the file must be '#cloud-config', see: https://cloudinit.readthedocs.io/en/latest/topics/format.html#cloud-config-data.
+# For other references, see: https://cloud.google.com/container-optimized-os/docs/how-to/create-configure-instance.
+
+users:
+  - name: cloudservice
+    uid: 2000
+
+write_files:
+  # Adds systemctl service to patch Firewall configuration and enable inbound traffic to port 80 (History Archive).
+  # See: https://cloud.google.com/container-optimized-os/docs/how-to/firewall
+  - path: /etc/systemd/system/config-firewall-80.service
+    permissions: 0644
+    owner: root
+    content: |
+      [Unit]
+      Description=Configures the host firewall opening 80 port
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=true
+      ExecStart=/sbin/iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+
+  # Adds Full Node Validator as systemctl service, this enables something like "systemctl {start|stop} fv1.service".   
+  # See: https://cloud.google.com/container-optimized-os/docs/how-to/run-container-instance#using_cloud-init_with
+  - path: /etc/systemd/system/${NAME}.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Start a simple docker container
+      Wants=gcr-online.target
+      After=gcr-online.target
+
+      [Service]
+      Environment="HOME=/home/cloudservice"
+      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker
+      ExecStart=/usr/bin/docker run --net=host -u 0 --name=${NAME} --volume /mnt/disks/ssd:/usr/share/nginx/html:ro ${NGINX_CONTAINER_IMAGE}
+      ExecStop=/usr/bin/docker stop ${NAME}
+  
+  # Mounts the SSD disk then wipes the previous conten, see: 
+  # - https://cloud.google.com/compute/docs/disks/add-persistent-disk#format_and_mount_linux
+  # - https://stackoverflow.com/questions/53162620/automate-gcp-persistent-disk-initialization
+  - path: /etc/itsar/ssd-format-and-mount.sh
+    permissions: "0744"
+    owner: root
+    content: |
+      #!/bin/bash
+
+      set -e
+
+      echo "ssd-format-and-mount.sh START $(date)"
+
+      # /dev/... path comes from main.tf.google_compute_attached_disk.default.device_name
+      DEVICE_NAME=/dev/disk/by-id/google-my-ssd
+      DEVICE_NAME_MOUNT_PATH=/mnt/disks/ssd
+      DEVICE_NAME_IS_NOT_MOUNTED=0
+      # grep exit with 1 if it NOT found something
+      grep "$DEVICE_NAME_MOUNT_PATH " /proc/mounts || DEVICE_NAME_IS_NOT_MOUNTED=$?
+      echo "ssd-format-and-mount.sh LOG $(date) - DEVICE_NAME_IS_NOT_MOUNTED: $DEVICE_NAME_IS_NOT_MOUNTED"
+
+      if [ $DEVICE_NAME_IS_NOT_MOUNTED -eq "0" ]; then
+        echo "ssd-format-and-mount.sh LOG $(date) - $DEVICE_NAME_MOUNT_PATH is mounted"
+      else
+        echo "ssd-format-and-mount.sh LOG $(date) - $DEVICE_NAME_MOUNT_PATH is NOT mounted"
+        DEVICE_NAME_IS_NOT_FORMATTED=0
+        # blkid will exit 2 if blocks info are NOT found so if it's NOT formatted
+        sudo blkid $DEVICE_NAME || DEVICE_NAME_IS_NOT_FORMATTED=$?
+        if [ $DEVICE_NAME_IS_NOT_FORMATTED -eq "0" ]; then
+          echo "ssd-format-and-mount.sh LOG $(date) - $DEVICE_NAME is ALREADY formatted"
+        else
+          echo "ssd-format-and-mount.sh LOG $(date) - $DEVICE_NAME is NOT formatted"
+          sudo mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DEVICE_NAME
+          echo "ssd-format-and-mount.sh LOG $(date) - $DEVICE_NAME ext4 format done"
+        fi
+
+        echo "ssd-format-and-mount.sh LOG $(date) - mount $DEVICE_NAME to $DEVICE_NAME_MOUNT_PATH"
+        sudo mkdir -p $DEVICE_NAME_MOUNT_PATH
+        sudo mount -o discard,defaults $DEVICE_NAME $DEVICE_NAME_MOUNT_PATH
+        sudo chmod a+w $DEVICE_NAME_MOUNT_PATH
+        echo "ssd-format-and-mount.sh LOG $(date) - mount $DEVICE_NAME to $DEVICE_NAME_MOUNT_PATH done"
+      fi
+
+      echo $(date) >> $DEVICE_NAME_MOUNT_PATH/index-on-ssd.html
+
+      echo "ssd-format-and-mount.sh END $(date)"
+  
+  # Adds Logs export and forwanding as systemctl service, this enables log inspection on GCP 'Log Explorer' service, see:   
+  # - https://cloud.google.com/container-optimized-os/docs/how-to/logging#how_does_it_work
+  # - https://cos.googlesource.com/cos/overlays/board-overlays/+/refs/heads/master/project-lakitu/app-admin/stackdriver/files/stackdriver-logging.service
+  - path: /etc/systemd/system/my-cloud-init-logs.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=Print /var/log/cloud-init-* to this container stdout so stackdriver fluentd-lakitu.conf will capture
+      Wants=stackdriver-logging.target
+      After=stackdriver-logging.target
+
+      [Service]
+      ExecStart=/usr/bin/docker run --rm -u 0 --name=my-cloud-init-logs --volume /var/log:/opt/var/log debian:stable-20220801-slim bash -c 'head -n -2 /opt/var/log/cloud-init* && tail -n 2 -f /opt/var/log/cloud-init*'
+      ExecStop=/usr/bin/docker stop my-cloud-init-logs
+      ExecStopPost=/usr/bin/docker rm my-cloud-init-logs
+
+    
+runcmd:
+  - systemctl daemon-reload
+
+  # Starts the 'logging forwarder' to export Logs on GCP
+  - touch /var/log/cloud-init-ssd-format-and-mount.sh.log
+  - systemctl start my-cloud-init-logs.service
+
+  # Updates/overrides Linux Firewall rules (enables port 80. 11625, 11626) 
+  - systemctl start config-firewall-80.service
+
+  # Mounts SSD Disks and wipest them
+  - /etc/itsar/ssd-format-and-mount.sh 2>&1 >> /var/log/cloud-init-ssd-format-and-mount.sh.log
+  
+  # Starts the Docker Container
+  - systemctl start ${NAME}.service
