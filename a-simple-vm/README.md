@@ -1,5 +1,17 @@
 # Terraform howtoss
 
-## Use environment variables to define Terraform input variables
+Every TF_* environment variable (print them with `env`) will be used for defined Terraform input variables.
 
-`TF_VAR_GOOGLE_CLOUD_PROJECT_ID=exalted-pattern-424313-j3 terraform apply`
+`terraform init`
+
+`terraform fmt`
+
+`terraform plan`
+
+`terraform import`
+
+`terraform apply`
+
+## Generate an SSH key
+
+`ssh-keygen`
