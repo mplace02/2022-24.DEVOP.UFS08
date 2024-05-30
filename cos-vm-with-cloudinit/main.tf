@@ -31,6 +31,7 @@ resource "google_compute_instance" "default" {
   name         = "my-instance"
   machine_type = "n2-standard-2"
   zone         = var.GOOGLE_CLOUD_ZONE
+  tags         = ["my-allow-80"] // To adopt specific firewall rules
 
   // Enables Terraform to stop the Compute Engine instance in order to update the .yml config.
   // See: https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance#allow_stopping_for_update
@@ -103,4 +104,29 @@ resource "google_compute_disk" "ssd_persistent_disk" {
 
   // Even when Terraform wants to provision a new resource the old one shouldn't get destroyed
   lifecycle { prevent_destroy = true }
+}
+
+// Resource: Provision Firewall rules for every Compute Engine instance w/ 'my-allow-80' tags
+//
+// Description:
+// By default GCP blocks all inbound traffic to the Compute instance, in order to enable communication we open
+// the HTTP port (80) to inbound and outbound traffic. Keep in mind that since the instances
+// are provisioned behind a VPC it's still possible to hide them from external access (right now this is not the case).
+resource "google_compute_firewall" "my-firewall-rules" {
+  provider = google-beta
+
+  project = nonsensitive(data.doppler_secrets.googlecloud.map.PROJECT_ID)
+
+  name        = "my-firewall-rules"
+  description = "GCP Firewall rule for Compute Engine instances with 'my-allow-80' tag"
+
+  network     = "default"       // This rules apply to the project VPC provisioned in ./network.tf
+  target_tags = ["my-allow-80"] // All Compute instances with this tags use this firewall rule 
+
+  // Allows both inbound and outbound connection(s) from everyone to port 11625 and 11626
+  source_ranges = ["0.0.0.0/0"] // Allows traffic from all (VPC internal only) sources 
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
 }
