@@ -31,3 +31,4 @@ Use the first Project ID as the default one
 Enable one specific Google Cloud API
 
 `gcloud services enable compute.googleapis.com`
+                        cloudfunctions.googleapis.com
