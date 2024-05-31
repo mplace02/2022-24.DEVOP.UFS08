@@ -4,6 +4,8 @@
 
 Clean up previous session
 
+id: crafty-eye-424313-n0
+
 `gcloud auth revoke --all`
 
 `gcloud auth application-default revoke`
