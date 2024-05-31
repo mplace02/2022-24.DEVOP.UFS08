@@ -15,7 +15,3 @@ Every TF_* environment variable (print them with `env`) will be used for defined
 ## Generate an SSH key
 
 `ssh-keygen`
-
-
-
-pushhhhh
